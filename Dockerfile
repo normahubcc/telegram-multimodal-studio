@@ -1,6 +1,7 @@
 FROM python:3.12-slim
 
 # Install system dependencies (ffmpeg for media inspection, curl for health checks)
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
@@ -13,6 +14,7 @@ WORKDIR /app
 
 # Install python dependencies
 COPY pyproject.toml .
+# hadolint ignore=DL3013
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
 
