@@ -1,0 +1,242 @@
+# NormaHub telegram-multimodal-studio (Full Architecture & LLM Reference)
+> Comprehensive reference manual for Telegram Multimodal Studio: aiogram 3.15+, OpenAI Whisper transcription, and ByteDance SeeDance 2.5 & xAI Grok Imagine Video generation via the NormaHub gateway.
+
+---
+
+## 1. Executive Summary & Purpose
+`telegram-multimodal-studio` is a production-grade Telegram bot designed for high-concurrency, long-running multimodal AI workloads. It solves the key limitations of standard Telegram AI bots:
+- **Audio & Video Note Transcription**: Automatically receives and transcribes user voice notes (`.oga`/`.ogg`) and circular video notes (`.mp4`) via the OpenAI-compatible `/v1/audio/transcriptions` endpoint on NormaHub.
+- **Persistent Asynchronous Generation**: Video generation by diffusion models (SeeDance 2.5 and Grok Imagine) takes between 45 and 180 seconds. Rather than blocking the bot's async loop or relying on volatile in-memory dicts, tasks are persisted in an embedded SQLite database configured with Write-Ahead Logging (`WAL`). If the bot restarts or is redeployed during generation, pending tasks are recovered and completed videos are delivered to users without data loss.
+- **Interactive Visual Feedback**: Users receive live status updates with animated unicode progress bars (`[██████░░░░] 60%`), descriptive rendering stages, and elapsed time timers.
+- **Telegram Flood Control**: Message editing is debounced to avoid triggering Telegram `RetryAfter` rate-limiting errors.
+- **Zero-VPN Russian Infrastructure**: Operates directly from Russia and CIS without VPN or proxy workarounds, with corporate payment support in RUB via SBP, MIR, and Diadoc VAT invoices.
+
+---
+
+## 2. System Architecture
+
+```text
++-----------------------------------------------------------------------------------+
+|                                  Telegram Client                                  |
+|         [Voice Note .oga]     [Video Note .mp4]       [Command: /video <prompt>]  |
++-----------------------------------------------------------------------------------+
+                                         |
+                                         v
++-----------------------------------------------------------------------------------+
+|                         Telegram Multimodal Studio Core                           |
+|                                                                                   |
+|  +-----------------------+     +------------------------+     +----------------+  |
+|  |   bot/handlers/voice  |     |   bot/handlers/video   |     | commands /help |  |
+|  +-----------------------+     +------------------------+     +----------------+  |
+|             |                              |                                      |
+|             v                              v                                      |
+|  +-----------------------+     +------------------------+                         |
+|  |    WhisperService     |     |   SQLite WAL Storage   |                         |
+|  | (download & multipart)|     |  (video_tasks table)   |                         |
+|  +-----------------------+     +------------------------+                         |
+|             |                              |                                      |
+|             |                              v                                      |
+|             |                  +------------------------+                         |
+|             |                  |      QueueWorker       |                         |
+|             |                  |  (async background)    |                         |
+|             |                  +------------------------+                         |
+|             |                              |                                      |
+|             v                              v                                      |
+|  +------------------------------------------------------+                         |
+|  |                 NormaHub API Gateway                 |                         |
+|  |           https://api.normahub.cc/v1                 |                         |
+|  +------------------------------------------------------+                         |
+|             |                              |                                      |
+|             v                              v                                      |
+|   OpenAI Whisper-1           ByteDance SeeDance 2.5 / Grok Imagine                |
++-----------------------------------------------------------------------------------+
+```
+
+---
+
+## 3. Directory Layout
+
+```text
+telegram-multimodal-studio/
+├── .env.example              # Environment variables template
+├── .gitignore                # Git ignore rules (sqlite, venv, pycache, media)
+├── CITATION.cff              # Citation metadata
+├── Dockerfile                # Production container definition (Python 3.12-slim + ffmpeg)
+├── docker-compose.yml        # Docker compose service with persistent storage volume
+├── LICENSE                   # MIT License
+├── Makefile                  # Developer commands (run, lint, test, format, docker)
+├── pyproject.toml            # Dependencies and tools (ruff, pytest)
+├── llms.txt                  # High-level LLM project brief
+├── llms-full.txt             # In-depth architectural & API manual (this document)
+├── README.md                 # User & developer guide with FAQ
+├── bot/
+│   ├── __init__.py
+│   ├── config.py             # Pydantic Settings configuration
+│   ├── main.py               # Application bootstrap and shutdown hooks
+│   ├── handlers/
+│   │   ├── __init__.py
+│   │   ├── commands.py       # /start, /help, /models, /balance & menu callbacks
+│   │   ├── video.py          # /video, /seedance, /grok & image-to-video handlers
+│   │   └── voice.py          # Voice and video note transcription handlers
+│   ├── keyboards/
+│   │   ├── __init__.py
+│   │   └── inline.py         # Menus, ratio selectors, prompt-to-video buttons
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── task_queue.py     # SQLite WAL queue and QueueWorker
+│   │   ├── video_service.py  # NormaHub SeeDance & Grok video client
+│   │   └── whisper_service.py# Telegram download & Whisper transcription client
+│   └── utils/
+│       ├── __init__.py
+│       ├── formatting.py     # Duration, markdown escaping, truncation
+│       └── progress.py       # Unicode progress bars and stage messages
+└── tests/
+    ├── __init__.py
+    ├── conftest.py           # Pytest fixtures and mock environments
+    ├── test_queue.py         # SQLite WAL queue & crash-recovery tests
+    ├── test_video.py         # VideoService creation and polling tests
+    └── test_whisper.py       # WhisperService download & API tests
+```
+
+---
+
+## 4. API Endpoints & Request Specifications
+
+### 4.1 Speech-to-Text (`/v1/audio/transcriptions`)
+- **Protocol**: HTTP/1.1 POST Multipart Form-Data
+- **URL**: `https://api.normahub.cc/v1/audio/transcriptions`
+- **Headers**:
+  ```http
+  Authorization: Bearer nr_hub_...
+  User-Agent: Telegram-Multimodal-Studio/1.0.0
+  ```
+- **Form Fields**:
+  - `file`: Binary audio or video stream (`voice.oga` or `video_note.mp4`)
+  - `model`: `whisper-1`
+  - `response_format`: `json`
+  - `language` *(optional)*: ISO 639-1 code (e.g., `ru`, `en`)
+- **Response**:
+  ```json
+  {
+    "text": "Распознанный текст сообщения...",
+    "language": "ru",
+    "duration": 14.2
+  }
+  ```
+
+### 4.2 Video Task Creation (`/v1/videos`)
+- **Protocol**: HTTP/1.1 POST JSON
+- **URL**: `https://api.normahub.cc/v1/videos` (fallback: `/v1/videos/generations`)
+- **Headers**:
+  ```http
+  Authorization: Bearer nr_hub_...
+  Content-Type: application/json
+  ```
+- **Payload**:
+  ```json
+  {
+    "model": "seedance-2.5",
+    "prompt": "Футуристический киберпанк-город под ночным дождем, 4k cinematic",
+    "duration": 5,
+    "aspect_ratio": "16:9",
+    "image_url": "https://..."
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "id": "task_seedance_7a9f82b1c4",
+    "status": "queued"
+  }
+  ```
+
+### 4.3 Video Status Polling (`/v1/videos/status/{id}`)
+- **Protocol**: HTTP/1.1 GET JSON
+- **URL**: `https://api.normahub.cc/v1/videos/status/{task_id}` (fallback: `/v1/videos/tasks/{task_id}`)
+- **Response (In Progress)**:
+  ```json
+  {
+    "task_id": "task_seedance_7a9f82b1c4",
+    "status": "processing",
+    "progress": 65
+  }
+  ```
+- **Response (Completed)**:
+  ```json
+  {
+    "task_id": "task_seedance_7a9f82b1c4",
+    "status": "completed",
+    "progress": 100,
+    "video_url": "https://cdn.normahub.cc/videos/rendered_7a9f82.mp4"
+  }
+  ```
+
+---
+
+## 5. SQLite Task Queue & Recovery Logic
+
+### 5.1 Database Schema
+```sql
+CREATE TABLE IF NOT EXISTS video_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT UNIQUE NOT NULL,
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    prompt TEXT NOT NULL,
+    model TEXT NOT NULL,
+    aspect_ratio TEXT NOT NULL,
+    duration INTEGER NOT NULL,
+    image_url TEXT,
+    status TEXT NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    upstream_task_id TEXT,
+    video_url TEXT,
+    error_message TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON video_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_created ON video_tasks(created_at);
+```
+
+### 5.2 Crash Recovery Workflow
+1. When `QueueWorker` starts up, it executes:
+   ```sql
+   SELECT * FROM video_tasks WHERE status IN ('pending', 'submitting', 'processing') ORDER BY created_at ASC;
+   ```
+2. Any active tasks that were interrupted by a bot reboot or deployment are resumed.
+3. If `upstream_task_id` exists, the worker immediately begins polling NormaHub status.
+4. When the video completes, it is delivered to the originating `chat_id`, referencing the original `message_id`.
+
+---
+
+## 6. Environment Variables Reference
+
+| Variable | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `TELEGRAM_BOT_TOKEN` | string | *required* | Telegram Bot API token from @BotFather |
+| `NORMAHUB_API_KEY` | string | *required* | API key from https://normahub.cc |
+| `NORMAHUB_BASE_URL` | string | `https://api.normahub.cc/v1` | NormaHub API endpoint base URL |
+| `DB_PATH` | string | `data/tasks.db` | File path for persistent SQLite database |
+| `DEFAULT_VIDEO_MODEL` | string | `seedance-2.5` | Default video generator (`seedance-2.5`, `grok-imagine-video-1.5`) |
+| `DEFAULT_WHISPER_MODEL`| string | `whisper-1` | Model for audio & circle transcription |
+| `MAX_CONCURRENT_TASKS`| int | `5` | Maximum parallel video generation tasks |
+| `POLL_INTERVAL_SECONDS`| float | `3.0` | Polling loop base interval |
+| `MAX_POLL_TIMEOUT_SECONDS`| int | `600` | Generation timeout threshold (10 minutes) |
+| `LOG_LEVEL` | string | `INFO` | Console logging level |
+
+---
+
+## 7. Error Handling & Edge Cases
+
+1. **Telegram FloodWait / RetryAfter**:
+   The worker debounces Telegram message edits to at least 4 seconds between calls or a 15% progress leap. If Telegram returns an error, the worker logs it and continues polling without terminating the task.
+2. **HTTP 402 Insufficient Balance**:
+   Caught explicitly in both Whisper and Video services. The user receives a clear explanation with instructions to top up via Russian payment methods (SBP, MIR) on `normahub.cc`.
+3. **Empty Audio Streams**:
+   Audio with silence or duration < 0.5s is caught and reported to the user gracefully.
+4. **Invalid Image URLs in I2V**:
+   If a user triggers `/video` with a corrupted photo or Telegram cannot generate the download link, the system falls back to text-only mode and notifies the user.

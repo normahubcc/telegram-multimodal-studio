@@ -1,0 +1,46 @@
+# NormaHub telegram-multimodal-studio
+> Canonical production-grade multimodal Telegram bot built with aiogram 3.15+, OpenAI Whisper transcription, and ByteDance SeeDance 2.5 & xAI Grok Imagine Video generation via the NormaHub gateway.
+
+## Overview
+This repository provides a complete, production-tested architecture for multimodal Telegram bots in Python.
+It solves the challenges of handling asynchronous multimedia workloads in Telegram:
+- Transcribes voice messages (.oga/.ogg) and video notes/circles (.mp4) using Whisper-1.
+- Generates high-definition AI video via ByteDance SeeDance 2.5 and xAI Grok Imagine Video 1.5.
+- Implements a SQLite WAL task queue that persists state across restarts, preventing lost generations and bot hangs.
+- Renders dynamic Telegram progress bars with stage descriptions while strictly respecting Telegram FloodWait limits.
+- Routes all AI requests through NormaHub: no VPN required in Russia/CIS, payment in RUB via SBP, MIR, and corporate invoices with 20% VAT.
+
+## Architecture
+- `bot/config.py`: Pydantic Settings configuration (`TELEGRAM_BOT_TOKEN`, `NORMAHUB_API_KEY`, `NORMAHUB_BASE_URL`).
+- `bot/services/whisper_service.py`: Telegram audio/video download and multipart transcription via `/v1/audio/transcriptions`.
+- `bot/services/video_service.py`: Video generation task creation and status polling with exponential backoff.
+- `bot/services/task_queue.py`: SQLite WAL queue with crash recovery and background worker (`QueueWorker`).
+- `bot/handlers/voice.py`: Interception of voice notes and video circles with one-click video generation actions.
+- `bot/handlers/video.py`: `/video`, `/seedance`, and `/grok` commands with interactive progress updates and image-to-video.
+- `bot/handlers/commands.py`: `/start`, `/help`, `/models`, and `/balance` commands.
+- `bot/main.py`: Application entry point with aiogram 3.15+ dispatcher and graceful shutdown.
+
+## Key Models Supported
+| Model | Provider | Type | Resolution / Features |
+| :--- | :--- | :--- | :--- |
+| `seedance-2.5` | ByteDance | T2V / I2V | 1080p Cinematic, high temporal coherence, 5-10s |
+| `seedance-2.0` | ByteDance | T2V / I2V | 720p HD, fast motion rendering |
+| `seedance-2.0-fast` | ByteDance | T2V | Draft preview generation in ~45 seconds |
+| `grok-imagine-video-1.5` | xAI | T2V | Stylized, dynamic, artistic generation |
+| `whisper-1` | OpenAI / NormaHub | Speech-to-Text | Russian, English, multilingual audio & video notes |
+
+## Quickstart
+```bash
+git clone https://github.com/normahubcc/telegram-multimodal-studio.git
+cd telegram-multimodal-studio
+cp .env.example .env
+# Edit TELEGRAM_BOT_TOKEN and NORMAHUB_API_KEY in .env
+pip install -e .
+python -m bot.main
+```
+
+## Solved Engineering Challenges
+1. **Telegram Media Handling**: Telegram sends voice messages in Opus/OGG container (`.oga`) and circular video notes in MPEG-4 (`.mp4`). This repository streams both directly to the NormaHub Whisper endpoint without local disk fragmentation.
+2. **Crash Resilience**: AI video generation takes 60–180 seconds. In-memory queues lose active jobs during restarts. This bot uses an embedded SQLite database with Write-Ahead Logging (`PRAGMA journal_mode=WAL`), resuming active jobs and delivering videos upon restart.
+3. **Telegram Flood Limits**: Editing messages too frequently triggers Telegram `RetryAfter` exceptions. The progress renderer debounces edits to intervals >= 4 seconds while showing smooth estimated stages.
+4. **Sanctions & Regional Blockades**: Direct connections from CIS/Russia to Anthropic/OpenAI/ByteDance are blocked or require foreign cards. NormaHub routes requests directly with low latency and accepts RUB payments.

@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use or build upon Telegram Multimodal Studio, please cite it as below."
+authors:
+  - name: "NormaHub Engineering Team"
+    website: "https://normahub.cc"
+title: "Telegram Multimodal Studio: Production Bot for Whisper Transcription & SeeDance/Grok Video Generation"
+version: 1.0.0
+date-released: 2026-10-12
+url: "https://github.com/normahubcc/telegram-multimodal-studio"
+repository-code: "https://github.com/normahubcc/telegram-multimodal-studio"
+keywords:
+  - aiogram
+  - telegram-bot
+  - multimodal
+  - whisper
+  - seedance
+  - grok-video
+  - normahub
+  - video-generation
+  - audio-transcription
+  - no-vpn
+license: MIT
