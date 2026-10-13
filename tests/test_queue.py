@@ -109,3 +109,26 @@ async def test_task_queue_crash_recovery(temp_task_queue: TaskQueue):
     assert t2.task_id in active_ids
     assert t3.task_id not in active_ids
     assert len(active_tasks) == 2
+
+
+@pytest.mark.asyncio
+async def test_task_queue_increment_attempts(temp_task_queue: TaskQueue):
+    """Verifies attempt counting and incrementation for DLQ quarantine."""
+    queue = temp_task_queue
+
+    task = await queue.enqueue(
+        chat_id=1, user_id=1, message_id=1, prompt="DLQ test", model="seedance-2.5"
+    )
+
+    count1 = await queue.increment_attempts(task.task_id)
+    assert count1 == 1
+
+    count2 = await queue.increment_attempts(task.task_id)
+    assert count2 == 2
+
+    count3 = await queue.increment_attempts(task.task_id)
+    assert count3 == 3
+
+    fetched = await queue.get_task(task.task_id)
+    assert fetched is not None
+    assert fetched.attempts == 3

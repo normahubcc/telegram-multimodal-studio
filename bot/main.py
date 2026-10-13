@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import shutil
 import sys
 
 from aiogram import Bot, Dispatcher
@@ -82,6 +83,14 @@ async def main() -> None:
 
     # 5. Lifecycle Hooks
     async def on_startup() -> None:
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if ffmpeg_bin:
+            logger.info("Media engine: ffmpeg binary discovered at %s", ffmpeg_bin)
+        else:
+            logger.info(
+                "Media engine: ffmpeg binary not found in PATH. Audio/video streams will use native NormaHub Whisper API formats."
+            )
+
         bot_info = await bot.get_me()
         logger.info(
             "Bot connected as @%s (id=%d). Starting background task queue worker...",

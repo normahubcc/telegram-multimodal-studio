@@ -267,6 +267,21 @@ class TaskQueue:
             await db.execute(query, params)
             await db.commit()
 
+    async def increment_attempts(self, task_id: str) -> int:
+        """Increment attempt counter for task and return new count."""
+        now = time.time()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE video_tasks SET attempts = attempts + 1, updated_at = ? WHERE task_id = ?;",
+                (now, task_id),
+            )
+            await db.commit()
+            cursor = await db.execute(
+                "SELECT attempts FROM video_tasks WHERE task_id = ?;", (task_id,)
+            )
+            row = await cursor.fetchone()
+            return int(row[0]) if row else 1
+
 
 class QueueWorker:
     """Background worker that continuously processes queued tasks and updates Telegram."""
@@ -339,6 +354,21 @@ class QueueWorker:
         """Handles single task lifecycle: submit, poll with progress, deliver video."""
         logger.info("Processing task %s (model: %s)", task.task_id, task.model)
         start_time = task.created_at
+
+        # DLQ check: increment attempt counter and quarantine if repeatedly failing
+        current_attempts = await self.queue.increment_attempts(task.task_id)
+        if current_attempts > 3:
+            logger.error(
+                "Task %s exceeded retry threshold (attempts=%d). Moving to Dead-Letter Queue (DLQ).",
+                task.task_id,
+                current_attempts,
+            )
+            await self._fail_task(
+                task,
+                "⚠️ **Задача помещена в карантин (Dead-Letter Queue).**\n"
+                "Превышено максимальное число повторных попыток (3). Пожалуйста, создайте задачу заново.",
+            )
+            return
 
         # 1. Submit upstream if not already submitted
         upstream_id = task.upstream_task_id
