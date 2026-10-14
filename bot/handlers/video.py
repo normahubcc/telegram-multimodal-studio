@@ -5,9 +5,14 @@ import re
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from bot.config import BotConfig
+from bot.keyboards.inline import (
+    CINEMATIC_PRESETS,
+    get_preset_detail_keyboard,
+    get_presets_keyboard,
+)
 from bot.services.task_queue import TaskQueue
 from bot.utils.formatting import truncate_text
 from bot.utils.progress import make_progress_bar
@@ -17,13 +22,22 @@ router = Router(name="video_router")
 
 
 def _parse_video_flags(raw_text: str) -> tuple[str, str, int]:
-    """Extracts --ratio and --duration flags from prompt string.
+    """Extracts --ratio, --duration, and --preset flags from prompt string.
 
     Returns:
         (clean_prompt, aspect_ratio, duration)
     """
     aspect_ratio = "16:9"
     duration = 5
+
+    # Extract --preset <key>
+    preset_match = re.search(r"--preset\s+([a-zA-Z0-9_-]+)", raw_text, re.IGNORECASE)
+    preset_suffix = ""
+    if preset_match:
+        preset_key = preset_match.group(1).lower()
+        if preset_key in CINEMATIC_PRESETS:
+            preset_suffix = CINEMATIC_PRESETS[preset_key]["suffix"]
+        raw_text = re.sub(r"--preset\s+([a-zA-Z0-9_-]+)", "", raw_text, flags=re.IGNORECASE)
 
     # Extract --ratio 16:9 | 9:16 | 1:1
     ratio_match = re.search(r"--ratio\s+(16:9|9:16|1:1)", raw_text, re.IGNORECASE)
@@ -40,6 +54,9 @@ def _parse_video_flags(raw_text: str) -> tuple[str, str, int]:
         raw_text = re.sub(r"--duration\s+(\d+)", "", raw_text, flags=re.IGNORECASE)
 
     clean_prompt = " ".join(raw_text.split()).strip()
+    if clean_prompt and preset_suffix:
+        clean_prompt += preset_suffix
+
     return clean_prompt, aspect_ratio, duration
 
 
@@ -195,3 +212,84 @@ async def _start_video_generation(
         model,
         clean_prompt,
     )
+
+
+# ==============================================================================
+# Cinematic Preset Handlers
+# ==============================================================================
+
+
+@router.message(Command("presets"))
+async def handle_presets_command(message: Message) -> None:
+    """Displays interactive catalog of cinematic video generation styles."""
+    text = (
+        "🎨 **Кинематографические пресеты стилей для видео**\n\n"
+        "Выберите желаемый визуальный стиль для применения к генерации через SeeDance 2.5:\n\n"
+        "💡 *Вы также можете сразу применить пресет к любой команде:*\n"
+        "`/video Гоночный болид на трассе --preset cyberpunk`\n"
+        "`/seedance Деревенский домик у озера --preset anime_shinkai`"
+    )
+    await message.answer(text, reply_markup=get_presets_keyboard())
+
+
+@router.callback_query(F.data == "menu:presets")
+async def cb_presets_menu(callback: CallbackQuery) -> None:
+    """Shows cinematic presets from inline menu."""
+    await callback.answer()
+    text = (
+        "🎨 **Кинематографические пресеты стилей для видео**\n\n"
+        "Выберите визуальный стиль для ознакомления и тестирования:"
+    )
+    if callback.message:
+        await callback.message.answer(text, reply_markup=get_presets_keyboard())
+
+
+@router.callback_query(F.data.startswith("preset:view:"))
+async def cb_preset_view(callback: CallbackQuery) -> None:
+    """Shows details and sample prompt for a selected preset."""
+    await callback.answer()
+    if not callback.data:
+        return
+    preset_key = callback.data.split(":")[-1]
+    preset = CINEMATIC_PRESETS.get(preset_key)
+    if not preset or not callback.message:
+        return
+
+    text = (
+        f"🎨 **Стиль: {preset['title']}**\n\n"
+        f"📖 **Описание:** {preset['description']}\n\n"
+        f"📝 **Тестовый промпт:**\n_{preset['sample']}_\n\n"
+        f"⚙️ **Ключевой тег:** `--preset {preset_key}`\n\n"
+        "Нажмите кнопку ниже, чтобы запустить тестовую генерацию в этом стиле:"
+    )
+    await callback.message.answer(
+        text,
+        reply_markup=get_preset_detail_keyboard(preset_key),
+    )
+
+
+@router.callback_query(F.data.startswith("preset:run_sample:"))
+async def cb_preset_run_sample(
+    callback: CallbackQuery,
+    bot: Bot,
+    config: BotConfig,
+    task_queue: TaskQueue,
+) -> None:
+    """Immediately queues video generation with the preset sample prompt."""
+    await callback.answer("Запускаем генерацию тестового примера...")
+    if not callback.data or not callback.message:
+        return
+    preset_key = callback.data.split(":")[-1]
+    preset = CINEMATIC_PRESETS.get(preset_key)
+    if not preset:
+        return
+
+    full_prompt = preset["sample"] + preset["suffix"]
+    await _start_video_generation(
+        message=callback.message,
+        raw_args=full_prompt,
+        model=config.default_video_model,
+        bot=bot,
+        task_queue=task_queue,
+    )
+

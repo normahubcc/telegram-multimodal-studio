@@ -1,6 +1,39 @@
-"""Inline keyboards for video generation wizards and quick actions."""
+"""Inline keyboards for video generation wizards, presets and quick actions."""
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+CINEMATIC_PRESETS: dict[str, dict[str, str]] = {
+    "cyberpunk": {
+        "title": "🌃 Cyberpunk Neon",
+        "description": "Ночной мегаполис, влажный асфальт с отражением неоновых вывесок, объемный туман, кинематографичная оптика.",
+        "sample": "Футуристический таксист едет по многоуровневому ночному мегаполису будущего",
+        "suffix": ", cyberpunk aesthetic, neon lights reflections, wet asphalt, volumetric haze, atmospheric cinematic lighting, 8k masterpiece",
+    },
+    "anime_shinkai": {
+        "title": "🌸 Anime Shinkai",
+        "description": "Стиль Макото Синкая: живописные перистые облака, золотой рассветный свет, падающие лепестки сакуры.",
+        "sample": "Школьница стоит на железнодорожном переезде на закате в Токио",
+        "suffix": ", Makoto Shinkai anime aesthetic, majestic sky and clouds, golden hour sunset, floating flower petals, breathtaking anime masterpiece",
+    },
+    "photoreal": {
+        "title": "📸 35mm Cinema Photoreal",
+        "description": "Анаморфотная 35мм кинолинза: естественная глубина резкости, мягкое пленочное зерно, живая кинематография.",
+        "sample": "Шеф-повар посыпает золотой солью дымящийся стейк на открытой кухне",
+        "suffix": ", shot on 35mm anamorphic lens, shallow depth of field, subtle film grain, natural rim lighting, photorealistic textures",
+    },
+    "drone_fpv": {
+        "title": "🦅 FPV Drone Action",
+        "description": "Динамичный полет от первого лица: головокружительные виражи, высокая скорость и панорамный горизонт.",
+        "sample": "Спортивный дрон пикирует сквозь ледяное ущелье заснеженных Альп",
+        "suffix": ", extreme dynamic FPV drone flythrough, ultra-fluid camera acrobatic motion, sweeping landscape, 60fps cinematic",
+    },
+    "slow_mo": {
+        "title": "⏳ Phantom 1000fps Slow-Mo",
+        "description": "Сверхскоростная съемка: микрокапли воды, разлетающиеся искры, застывшее во времени движение.",
+        "sample": "Капля кофе падает в фарфоровую чашку с образованием идеальной короны",
+        "suffix": ", 1000fps ultra slow motion, Phantom Flex 4K camera, micro-droplets, frozen motion physics, high contrast studio lighting",
+    },
+}
 
 
 def get_start_keyboard() -> InlineKeyboardMarkup:
@@ -9,14 +42,44 @@ def get_start_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="🎬 Сгенерировать видео", callback_data="menu:create_video"),
+                InlineKeyboardButton(text="🎨 Стили и пресеты", callback_data="menu:presets"),
+            ],
+            [
                 InlineKeyboardButton(text="🎙️ Транскрипция", callback_data="menu:transcribe_info"),
-            ],
-            [
                 InlineKeyboardButton(text="⚡ Каталог моделей", callback_data="menu:models"),
-                InlineKeyboardButton(text="💳 Мой баланс", callback_data="menu:balance"),
             ],
             [
-                InlineKeyboardButton(text="🌐 Личный кабинет NormaHub", url="https://normahub.cc"),
+                InlineKeyboardButton(text="💳 Мой баланс", callback_data="menu:balance"),
+                InlineKeyboardButton(text="🌐 NormaHub", url="https://normahub.cc"),
+            ],
+        ]
+    )
+
+
+def get_presets_keyboard() -> InlineKeyboardMarkup:
+    """Returns keyboard with all available cinematic style presets."""
+    buttons = []
+    for key, data in CINEMATIC_PRESETS.items():
+        buttons.append([InlineKeyboardButton(text=data["title"], callback_data=f"preset:view:{key}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:start")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_preset_detail_keyboard(preset_key: str) -> InlineKeyboardMarkup:
+    """Returns action buttons for a specific chosen preset."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎬 Запустить тестовый пример",
+                    callback_data=f"preset:run_sample:{preset_key}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 К списку пресетов",
+                    callback_data="menu:presets",
+                ),
             ],
         ]
     )

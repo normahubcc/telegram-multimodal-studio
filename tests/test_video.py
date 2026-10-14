@@ -106,3 +106,35 @@ async def test_get_task_status_completed():
     assert status.progress == 100
     assert status.is_successful
     assert status.video_url == "https://api.normahub.cc/v1/videos/downloads/12345.mp4"
+
+
+def test_parse_video_flags_with_preset():
+    """Verify --preset flag appends style suffix and cleans args."""
+    from bot.handlers.video import _parse_video_flags
+    from bot.keyboards.inline import CINEMATIC_PRESETS
+
+    raw = "Neon car race --preset cyberpunk --ratio 9:16 --duration 10"
+    prompt, ratio, duration = _parse_video_flags(raw)
+
+    assert ratio == "9:16"
+    assert duration == 10
+    assert "Neon car race" in prompt
+    assert CINEMATIC_PRESETS["cyberpunk"]["suffix"] in prompt
+    assert "--preset" not in prompt
+
+
+def test_presets_keyboard_generation():
+    """Verify preset keyboards structure and content."""
+    from bot.keyboards.inline import (
+        CINEMATIC_PRESETS,
+        get_preset_detail_keyboard,
+        get_presets_keyboard,
+    )
+
+    kb = get_presets_keyboard()
+    assert len(kb.inline_keyboard) == len(CINEMATIC_PRESETS) + 1  # presets + back
+
+    detail_kb = get_preset_detail_keyboard("cyberpunk")
+    assert len(detail_kb.inline_keyboard) == 2
+    assert "preset:run_sample:cyberpunk" in detail_kb.inline_keyboard[0][0].callback_data
+
